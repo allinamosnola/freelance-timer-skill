@@ -4,9 +4,9 @@
 Data lives in ~/.claude/freelance-timer/ (override with FT_HOME):
   config.json     projects and their hourly rates
   ledger.jsonl    one closed interaction per line (append-only)
-  state/<id>.json the open session + interaction for one working directory
+  state/<id>.json the open session + interaction (id printed by `begin`, pass it as --session)
 """
-import argparse, hashlib, html, json, os, sys, time, webbrowser
+import argparse, hashlib, html, json, os, re, secrets, sys, time, webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,8 +20,32 @@ def now():
     return time.time()
 
 
-def state_path():
-    return STATE_DIR / (hashlib.sha1(os.getcwd().encode()).hexdigest()[:12] + ".json")
+def cwd_id():
+    return hashlib.sha1(os.getcwd().encode()).hexdigest()[:12]
+
+
+def session_id(a):
+    """Explicit --session / FT_SESSION wins; otherwise the legacy per-directory id."""
+    sid = getattr(a, "session", None) or os.environ.get("FT_SESSION") or ""
+    if sid and not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", sid):
+        sys.exit(f"invalid session id {sid!r}")
+    return sid
+
+
+def state_path(a):
+    return STATE_DIR / ((session_id(a) or cwd_id()) + ".json")
+
+
+def open_here():
+    """State files in this directory with an unclosed interaction whose session went quiet
+    (a live session in the same directory ticks within IDLE_CAP and is left alone)."""
+    found = []
+    for p in sorted(STATE_DIR.glob("*.json")) if STATE_DIR.exists() else []:
+        st = load(p, None)
+        if (st and st.get("interaction") and now() - st["last_ts"] > IDLE_CAP
+                and (st.get("cwd") == os.getcwd() or p.stem == cwd_id())):
+            found.append((p, st))
+    return found
 
 
 def load(path, default):
@@ -63,16 +87,33 @@ def cmd_begin(a):
     proj = cfg["projects"].get(key(a.client, a.project))
     if not proj:
         sys.exit(f"unknown project {key(a.client, a.project)}; run setup first")
-    st = {"client": a.client, "project": a.project, "rate": proj["rate"],
-          "currency": proj["currency"], "billable_default": a.billable == "yes",
-          "last_ts": now(), "interaction": None}
-    save(state_path(), st)
+    sid = session_id(a) or secrets.token_hex(4)
+    a.session = sid
+    mine = state_path(a)
+    # an abandoned interaction is unbilled time: never overwrite it, make the caller close it
+    stale = dict(open_here())
+    own = load(mine, None)
+    if own and own.get("interaction"):
+        stale[mine] = own
+    if stale and not a.discard:
+        lines = [f"  session {p.stem if p.stem != cwd_id() else '(none: omit --session)'}: "
+                 f"{key(s['client'], s['project'])}, topic '{s['interaction']['topic']}', "
+                 f"{round(s['interaction']['seconds'] / 60)} min" for p, s in stale.items()]
+        sys.exit("unclosed interaction(s) in this directory; ask whether each was billable, "
+                 "run `close --billable yes|no [--session ID]` on it, then begin again "
+                 "(or pass --discard to drop them):\n" + "\n".join(lines))
+    for p in stale:
+        p.unlink(missing_ok=True)
+    st = {"session": sid, "cwd": os.getcwd(), "client": a.client, "project": a.project,
+          "rate": proj["rate"], "currency": proj["currency"],
+          "billable_default": a.billable == "yes", "last_ts": now(), "interaction": None}
+    save(mine, st)
     out(st)
 
 
 def cmd_tick(a):
     """Record one prompt. Adds elapsed time since the previous prompt (capped)."""
-    st = load(state_path(), None)
+    st = load(state_path(a), None)
     if not st:
         sys.exit("no open session; run begin first")
     t = now()
@@ -87,13 +128,13 @@ def cmd_tick(a):
     it["prompts"] += 1
     it["effort"] += EFFORT[a.effort]
     st["interaction"], st["last_ts"] = it, t
-    save(state_path(), st)
+    save(state_path(a), st)
     out({"interaction": it, "hours": round(it["seconds"] / 3600, 3)})
 
 
 def cmd_close(a):
     """Finish the open interaction: bill it (or not) and append it to the ledger."""
-    st = load(state_path(), None)
+    st = load(state_path(a), None)
     if not st or not st["interaction"]:
         sys.exit("no open interaction to close")
     t = now()
@@ -113,12 +154,12 @@ def cmd_close(a):
     with LEDGER.open("a") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     st["interaction"], st["last_ts"] = None, t
-    save(state_path(), st)
+    save(state_path(a), st)
     out(entry)
 
 
 def cmd_end(a):
-    p = state_path()
+    p = state_path(a)
     st = load(p, None)
     if st and st["interaction"]:
         sys.exit("an interaction is still open; close it first")
@@ -127,7 +168,7 @@ def cmd_end(a):
 
 
 def cmd_status(a):
-    st = load(state_path(), None)
+    st = load(state_path(a), None)
     if not st:
         print("no open session"); return
     it = st["interaction"]
@@ -231,6 +272,8 @@ def main():
         sp = sub.add_parser(name)
         for flag, kw in args.items():
             sp.add_argument("--" + flag.replace("_", "-"), **kw)
+        if name not in ("projects", "setup", "dashboard"):
+            sp.add_argument("--session", default="")
         sp.set_defaults(fn=fn)
 
     yn = {"choices": ["yes", "no"], "required": True}
@@ -238,7 +281,8 @@ def main():
     add("setup", cmd_setup, client=dict(required=True), project=dict(required=True),
         rate=dict(type=float, required=True), currency=dict(default="USD"),
         billable=dict(choices=["yes", "no"], default="yes"))
-    add("begin", cmd_begin, client=dict(required=True), project=dict(required=True), billable=yn)
+    add("begin", cmd_begin, client=dict(required=True), project=dict(required=True), billable=yn,
+        discard=dict(action="store_true"))
     add("tick", cmd_tick, topic=dict(required=True), tokens=dict(type=int, default=0),
         effort=dict(choices=list(EFFORT), default="medium"))
     add("close", cmd_close, billable=yn, note=dict(default=""),

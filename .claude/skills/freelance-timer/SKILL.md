@@ -17,6 +17,8 @@ All state is handled by `scripts/ft.py` (path relative to this skill; call it wi
    `python3 scripts/ft.py setup --client C --project P --rate 40 --currency USD --billable yes`
    The rate is set once per project and reused; only ask again if the user wants to change it.
 4. Open the session: `python3 scripts/ft.py begin --client C --project P --billable yes|no`
+   `begin` prints a `session` id. Remember it and pass `--session ID` to every later `tick`, `close`, `end` and `status` call: each session keeps its own state, so several Claude sessions in the same directory no longer overwrite each other.
+   If `begin` refuses because an earlier session left an interaction open (it lists session id, topic and minutes), ask the user whether that work was billable, run `python3 scripts/ft.py close --billable yes|no --session OLD_ID --note "..."` (omit `--session` when the list says so), then run `begin` again. Never use `--discard` unless the user says to throw that time away.
 
 If the user says the session is not for client work at all, run `begin` with `--billable no` on a project named for what it is (e.g. client "internal") so the time is still visible.
 
@@ -36,7 +38,7 @@ Time is computed from timestamps between ticks, with gaps over 15 minutes counte
 
 ## 3. End of session
 
-When the user says they are done (or says goodbye), ask whether the final interaction is billable, run `close`, then `python3 scripts/ft.py end`. If the user just stops responding, the open interaction stays in the state file and is closed the next time `begin`/`tick` runs for that directory: ask about it then.
+When the user says they are done (or says goodbye), ask whether the final interaction is billable, run `close`, then `python3 scripts/ft.py end`. If the user just stops responding, the open interaction stays in its state file and `begin` refuses to start a new session in that directory until it is closed: ask about it then.
 
 ## 4. Dashboard
 
@@ -47,4 +49,4 @@ When asked, run `python3 scripts/ft.py dashboard`. It writes `~/.claude/freelanc
 ## Notes
 
 - Keep the bookkeeping quiet. One short line per tick at most, and nothing when the topic is unchanged, because the user came here to work, not to watch a timer.
-- Several Claude sessions in the same directory share one state file; that is a known limitation.
+- Each `begin` creates its own state file, so concurrent sessions in one directory are independent. Commands without `--session` fall back to the old per-directory file.
