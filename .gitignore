@@ -1,0 +1,6 @@
+__pycache__/
+.DS_Store
+
+# local skill-authoring tooling and eval runs, not part of the skill
+.claude/skills/skill-creator/
+freelance-timer-workspace/
