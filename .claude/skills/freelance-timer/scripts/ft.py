@@ -106,6 +106,7 @@ def cmd_close(a):
         "seconds": round(it["seconds"]), "tokens_est": it["tokens"],
         "prompts": it["prompts"], "effort_avg": round(it["effort"] / it["prompts"], 2),
         "topic": it["topic"], "additional": a.extra, "additional_note": a.extra_note,
+        "additional_currency": (a.extra_currency or st["currency"]).upper(),
         "note": a.note,
     }
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
@@ -134,18 +135,30 @@ def cmd_status(a):
          "open_interaction": it and {**it, "hours": round(it["seconds"] / 3600, 3)}})
 
 
+def add_money(d, cur, v):
+    if v:
+        d[cur] = d.get(cur, 0.0) + v
+
+
+def fmt(d, billable=True):
+    """'95.00 USD + 10.00 EUR'; amounts of different currencies are never summed."""
+    parts = [f"{v:,.2f} {c}" for c, v in sorted(d.items()) if v]
+    return " + ".join(parts) if parts else ("0.00" if billable else "—")
+
+
 def rows():
     agg = {}
     for line in LEDGER.read_text().splitlines() if LEDGER.exists() else []:
         e = json.loads(line)
         k = (e["client"], e["project"], e["billable"])
-        r = agg.setdefault(k, {"seconds": 0, "tokens": 0, "cost": 0.0, "extra": 0.0,
-                               "currency": e["currency"], "notes": []})
+        r = agg.setdefault(k, {"seconds": 0, "tokens": 0, "cost": {}, "extra": {},
+                               "rate": e["rate"], "currency": e["currency"], "notes": []})
         r["seconds"] += e["seconds"]
         r["tokens"] += e["tokens_est"]
+        r["rate"], r["currency"] = e["rate"], e["currency"]
         if e["billable"]:
-            r["cost"] += e["seconds"] / 3600 * e["rate"]
-        r["extra"] += e.get("additional") or 0
+            add_money(r["cost"], e["currency"], e["seconds"] / 3600 * e["rate"])
+        add_money(r["extra"], e.get("additional_currency") or e["currency"], e.get("additional") or 0)
         for n in (e.get("note"), e.get("additional_note")):
             if n and n not in r["notes"]:
                 r["notes"].append(n)
@@ -154,23 +167,36 @@ def rows():
 
 def cmd_dashboard(a):
     agg = rows()
-    body, tot_h, tot_c, tot_x = [], 0.0, 0.0, 0.0
+    body, tot_h, tot_c, tot_x = [], {}, {}, {}
     for (client, project, billable), r in sorted(agg.items()):
         h = r["seconds"] / 3600
-        total = r["cost"] + r["extra"]
+        total = dict(r["cost"])
+        for c, v in r["extra"].items():
+            add_money(total, c, v)
         if billable:
-            tot_h, tot_c, tot_x = tot_h + h, tot_c + r["cost"], tot_x + r["extra"]
-        cur = r["currency"]
-        money = lambda v: f"{v:,.2f} {cur}" if billable or v else "—"
+            add_money(tot_h, r["currency"], h)
+            for c, v in r["cost"].items():
+                add_money(tot_c, c, v)
+            for c, v in r["extra"].items():
+                add_money(tot_x, c, v)
         body.append(
             "<tr>" + "".join(f"<td{c}>{html.escape(str(v))}</td>" for v, c in [
                 (client, ""), (project, ""),
+                (f"{r['rate']:,.2f} {r['currency']}/h", ' class="n"'),
                 ("billable" if billable else "non-billable", ' class="b"' if billable else ' class="nb"'),
-                (f"{h:.2f}", ' class="n"'), (money(r["cost"]), ' class="n"'),
-                (money(total), ' class="n"'), (money(r["extra"]), ' class="n"'),
+                (f"{h:.2f}", ' class="n"'),
+                (fmt(r["cost"], billable) if billable else "—", ' class="n"'),
+                (fmt(total, billable) if billable else fmt(r["extra"], False), ' class="n"'),
+                (fmt(r["extra"], billable), ' class="n"'),
                 ("; ".join(r["notes"]), ' class="notes"'),
             ]) + "</tr>")
-    cur = next(iter(agg.values()))["currency"] if agg else ""
+    # one footer row per currency; currencies are never summed together
+    foot = []
+    for c in sorted(set(tot_h) | set(tot_c) | set(tot_x)):
+        cost, extra = tot_c.get(c, 0.0), tot_x.get(c, 0.0)
+        foot.append(f'<tr><td colspan=3>Billable total ({html.escape(c)})<td><td class="n">{tot_h.get(c, 0.0):.2f}'
+                    f'<td class="n">{cost:,.2f} {c}<td class="n">{cost + extra:,.2f} {c}'
+                    f'<td class="n">{extra:,.2f} {c}<td></tr>')
     doc = f"""<!doctype html><meta charset="utf-8"><title>Freelance timer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -178,17 +204,17 @@ def cmd_dashboard(a):
 @media(prefers-color-scheme:dark){{:root{{--bg:#1c1917;--fg:#f5f5f4;--mut:#a8a29e;--line:#44403c;--ok:#4ade80;--nb:#78716c}}}}
 body{{background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;margin:0;padding:24px 16px}}
 h1{{font-size:20px;margin:0 0 4px}}p{{color:var(--mut);margin:0 0 16px}}
-.w{{overflow-x:auto}}table{{border-collapse:collapse;width:100%;min-width:720px}}
+.w{{overflow-x:auto}}table{{border-collapse:collapse;width:100%;min-width:820px}}
 th,td{{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
 th{{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}}
 .n{{text-align:right;font-variant-numeric:tabular-nums}}th.n{{text-align:right}}
 .b{{color:var(--ok)}}.nb{{color:var(--nb)}}.notes{{color:var(--mut);max-width:320px}}
 tfoot td{{font-weight:600;border-top:2px solid var(--line)}}
 </style>
-<h1>Freelance timer</h1><p>Generated {datetime.now():%Y-%m-%d %H:%M}. Cost = hours × rate (billable only); total = cost + additionals. Tokens are estimates.</p>
-<div class="w"><table><thead><tr><th>Client<th>Project<th>Billable<th class="n">Hours<th class="n">Cost<th class="n">Total cost<th class="n">Additionals<th>Notes</tr></thead>
-<tbody>{''.join(body) or '<tr><td colspan=8>No entries yet.</td></tr>'}</tbody>
-<tfoot><tr><td colspan=3>Billable total<td class="n">{tot_h:.2f}<td class="n">{tot_c:,.2f} {cur}<td class="n">{tot_c + tot_x:,.2f} {cur}<td class="n">{tot_x:,.2f} {cur}<td></tr></tfoot></table></div>"""
+<h1>Freelance timer</h1><p>Generated {datetime.now():%Y-%m-%d %H:%M}. Cost = hours x rate (billable only); total = cost + additionals. Each currency is totalled separately. Tokens are estimates.</p>
+<div class="w"><table><thead><tr><th>Client<th>Project<th class="n">Rate<th>Billable<th class="n">Hours<th class="n">Cost<th class="n">Total cost<th class="n">Additionals<th>Notes</tr></thead>
+<tbody>{''.join(body) or '<tr><td colspan=9>No entries yet.</td></tr>'}</tbody>
+<tfoot>{''.join(foot)}</tfoot></table></div>"""
     path = HOME / "dashboard.html"
     HOME.mkdir(parents=True, exist_ok=True)
     path.write_text(doc)
@@ -216,7 +242,8 @@ def main():
     add("tick", cmd_tick, topic=dict(required=True), tokens=dict(type=int, default=0),
         effort=dict(choices=list(EFFORT), default="medium"))
     add("close", cmd_close, billable=yn, note=dict(default=""),
-        extra=dict(type=float, default=0.0), extra_note=dict(default=""))
+        extra=dict(type=float, default=0.0), extra_note=dict(default=""),
+        extra_currency=dict(default=""))
     add("end", cmd_end)
     add("status", cmd_status)
     add("dashboard", cmd_dashboard, no_open=dict(action="store_true"))

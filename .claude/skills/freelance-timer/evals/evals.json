@@ -1,0 +1,29 @@
+{
+  "skill_name": "freelance-timer",
+  "evals": [
+    {
+      "id": 0,
+      "name": "new-project-session-start",
+      "prompt": "Session start. You are Claude in a fresh session; the freelance timer has no projects yet. The user's first message is: \"hey, working on the Acme website redesign today, it's billable, my rate is 60 USD/hour. first thing: the navbar collapses on mobile, can you look at it?\" Then the user's second message is: \"also make the hamburger icon bigger\". Handle both messages exactly as you would in a real session (do the bookkeeping; for the actual coding, just say in one line what you would do, don't touch real code).",
+      "expected_output": "setup for Acme/Website at 60 USD, begin with billable yes, two ticks on the same open interaction (no billable question between them, no close), no re-asking of the rate.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "topic-change-asks-billable",
+      "prompt": "Session in progress, project Acme/Website (billable, 60 USD/h) already set up and begun. Message 1 from user: \"fix the footer links\". Message 2: \"and the footer font looks off\". Message 3: \"unrelated: can you help me draft an email to my accountant about VAT?\". When you ask the user whether the previous work was billable, the user answers \"yes, bill it, and add a 15 EUR domain renewal as an extra\". Then message 4: \"ok that's all, bye\" and the user answers the final billable question with \"no, that was admin\". Play the whole session, writing down in transcript.md exactly what you say to the user at each step.",
+      "expected_output": "as before, plus: the extra is recorded with additional_currency EUR and the user is told it is kept in EUR separately from the USD project.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "dashboard-from-seeded-ledger",
+      "prompt": "The user says: \"show me my dashboard and tell me how much I can invoice per client\". The ledger already has data (seeded in your FT_HOME). Produce the dashboard and reply to the user with the per-client invoiceable total (cost plus additionals, billable only, keeping each currency separate).",
+      "expected_output": "dashboard generated with a rate column; reply states Acme 95.00 USD + 10.00 EUR, Beta 80.00 EUR; non-billable 0.25h not invoiced; currencies never summed.",
+      "files": [
+        "evals/files/ledger_seed.jsonl",
+        "evals/files/config_seed.json"
+      ]
+    }
+  ]
+}

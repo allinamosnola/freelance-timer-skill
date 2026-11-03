@@ -13,7 +13,7 @@ All state is handled by `scripts/ft.py` (path relative to this skill; call it wi
 
 1. Run `python3 scripts/ft.py projects` to list known projects and their rates.
 2. Ask the user, in one message, which client and project this session is for (offer the known ones) and whether it is billable. If the answer is already in the opening message, skip the question and confirm in a sentence.
-3. For a **new** project, ask for the hourly rate and currency now, then save it:
+3. For a **new** project, ask for the hourly rate and currency now (both are required, because every cost is reported in the project's own currency), then save it:
    `python3 scripts/ft.py setup --client C --project P --rate 40 --currency USD --billable yes`
    The rate is set once per project and reused; only ask again if the user wants to change it.
 4. Open the session: `python3 scripts/ft.py begin --client C --project P --billable yes|no`
@@ -27,7 +27,7 @@ Treat each user prompt as one tick, and do it before answering so elapsed time i
 1. Decide whether this prompt continues the **same task** as the open interaction (same goal, follow-up, correction, clarification) or starts a **different** one (new goal, different project, unrelated question). When unsure, treat a clear change of goal as different; a refinement as the same.
 2. If it is different and an interaction is open: ask the user "Was the previous work (`<topic>`) billable?" and wait. Then close it:
    `python3 scripts/ft.py close --billable yes|no --note "short note" [--extra 12.5 --extra-note "domain renewal"]`
-   Offer the extra/note fields only if relevant, don't interrogate. If the project itself changed, run `begin` for the new project after closing.
+   Offer the extra/note fields only if relevant, don't interrogate. An extra defaults to the project's currency; if the user names a different one, pass `--extra-currency EUR` and say in your reply that it is recorded in that currency and will be listed separately from the project's, because currencies are never converted or summed. If the project itself changed, run `begin` for the new project after closing.
 3. Record the prompt: `python3 scripts/ft.py tick --topic "short topic" --tokens N --effort low|medium|high`
    - `--tokens` is an estimate (about 4 characters per token across the prompt plus your reply, plus tool output you read). Claude cannot see exact usage, so say "estimated" whenever you report it.
    - `--effort` is your judgment of the work: low = quick answer, medium = normal coding, high = long multi-step or deep debugging.
@@ -40,7 +40,7 @@ When the user says they are done (or says goodbye), ask whether the final intera
 
 ## 4. Dashboard
 
-When asked, run `python3 scripts/ft.py dashboard`. It writes `~/.claude/freelance-timer/dashboard.html` and opens it. Columns: client | project | billable | hours | cost | total cost | additionals | notes. Cost = billable hours × rate; total cost = cost + additionals. Non-billable rows show hours but no cost. Summarise the footer totals in your reply.
+When asked, run `python3 scripts/ft.py dashboard`. It writes `~/.claude/freelance-timer/dashboard.html` and opens it. Columns: client | project | rate | billable | hours | cost | total cost | additionals | notes. Each row shows the project's rate and currency. Cost = billable hours × rate; total cost = cost + additionals. Amounts in different currencies are listed side by side (e.g. `95.00 USD + 10.00 EUR`) and the footer has one totals row per currency (hours, cost, total cost, additionals), so report per-currency figures, never one mixed number. Non-billable rows show hours but no cost. Summarise the footer totals in your reply.
 
 `python3 scripts/ft.py status` shows the open interaction at any time; use it when asked "how long have we been at this".
 
