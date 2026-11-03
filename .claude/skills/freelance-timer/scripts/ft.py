@@ -143,7 +143,8 @@ def cmd_close(a):
         sys.exit("no open interaction to close")
     t = now()
     it = st["interaction"]
-    it["seconds"] += min(t - st["last_ts"], IDLE_CAP)  # tail: time to finish the last reply
+    tail = t - st["last_ts"]
+    it["seconds"] += tail if tail <= IDLE_CAP else 0  # tail: time to finish the last reply; none if abandoned
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "client": st["client"], "project": st["project"],
@@ -227,7 +228,7 @@ def rows():
 
 def cmd_dashboard(a):
     agg = rows()
-    body, tot_h, tot_c, tot_x = [], {}, {}, {}
+    body, tot_h, tot_c, tot_x, tot_nx = [], {}, {}, {}, {}
     for (client, project, billable, _), r in sorted(agg.items()):
         h = r["seconds"] / 3600
         total = dict(r["cost"])
@@ -236,6 +237,8 @@ def cmd_dashboard(a):
             add_money(tot_h, r["currency"], h)
             merge_money(tot_c, r["cost"])
             merge_money(tot_x, r["extra"])
+        else:
+            merge_money(tot_nx, r["extra"])
         body.append(
             "<tr>" + "".join(f"<td{c}>{html.escape(str(v))}</td>" for v, c in [
                 (client, ""), (project, ""),
@@ -254,6 +257,10 @@ def cmd_dashboard(a):
         foot.append(f'<tr><td colspan=3>Billable total ({ec})<td><td class="n">{tot_h.get(c, 0.0):.2f}'
                     f'<td class="n">{cost:,.2f} {ec}<td class="n">{cost + extra:,.2f} {ec}'
                     f'<td class="n">{extra:,.2f} {ec}<td></tr>')
+    for c in sorted(tot_nx):
+        ec = html.escape(c)
+        foot.append(f'<tr><td colspan=3>Non-billable expenses ({ec})<td><td class="n">&mdash;<td class="n">&mdash;'
+                    f'<td class="n">&mdash;<td class="n">{tot_nx[c]:,.2f} {ec}<td></tr>')
     doc = f"""<!doctype html><meta charset="utf-8"><title>Freelance timer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>

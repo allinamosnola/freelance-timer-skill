@@ -42,7 +42,7 @@ When the user says they are done (or says goodbye), ask whether the final intera
 
 ## 4. Dashboard
 
-When asked, run `python3 scripts/ft.py dashboard`. It writes `~/.claude/freelance-timer/dashboard.html` and opens it. Columns: client | project | rate | billable | hours | cost | total cost | additionals | notes. Each row shows the project's rate and currency. Cost = billable hours × rate; total cost = cost + additionals. Amounts in different currencies are listed side by side (e.g. `95.00 USD + 10.00 EUR`) and the footer has one totals row per currency (hours, cost, total cost, additionals), so report per-currency figures, never one mixed number. Non-billable rows show hours but no cost. Summarise the footer totals in your reply.
+When asked, run `python3 scripts/ft.py dashboard`. It writes `~/.claude/freelance-timer/dashboard.html` and opens it. Columns: client | project | rate | billable | hours | cost | total cost | additionals | notes. Each row shows the project's rate and currency. Cost = billable hours × rate; total cost = cost + additionals. Amounts in different currencies are listed side by side (e.g. `95.00 USD + 10.00 EUR`) and the footer has one totals row per currency (hours, cost, total cost, additionals), so report per-currency figures, never one mixed number. Extras logged on non-billable work are not part of those totals; they get their own "Non-billable expenses" row per currency. Non-billable rows show hours but no cost. Summarise the footer totals in your reply.
 
 `python3 scripts/ft.py status` shows the open interaction at any time; use it when asked "how long have we been at this".
 
