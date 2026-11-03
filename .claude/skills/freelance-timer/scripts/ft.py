@@ -51,13 +51,17 @@ def open_here():
 def load(path, default):
     try:
         return json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         return default
+    except json.JSONDecodeError as e:
+        sys.exit(f"{path} is corrupt ({e}); repair or remove it instead of letting it be overwritten")
 
 
 def save(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, path)  # a crash mid-write never leaves a truncated file behind
 
 
 def key(client, project):
@@ -76,7 +80,7 @@ def cmd_setup(a):
     cfg = load(CONFIG, {"projects": {}})
     cfg["projects"][key(a.client, a.project)] = {
         "client": a.client, "project": a.project, "rate": a.rate,
-        "currency": a.currency, "billable": a.billable == "yes",
+        "currency": a.currency.upper(), "billable": a.billable == "yes",
     }
     save(CONFIG, cfg)
     out(cfg["projects"][key(a.client, a.project)])
@@ -181,6 +185,11 @@ def add_money(d, cur, v):
         d[cur] = d.get(cur, 0.0) + v
 
 
+def merge_money(dst, src):
+    for c, v in src.items():
+        add_money(dst, c, v)
+
+
 def fmt(d, billable=True):
     """'95.00 USD + 10.00 EUR'; amounts of different currencies are never summed."""
     parts = [f"{v:,.2f} {c}" for c, v in sorted(d.items()) if v]
@@ -188,56 +197,63 @@ def fmt(d, billable=True):
 
 
 def rows():
-    agg = {}
+    agg, bad = {}, 0
     for line in LEDGER.read_text().splitlines() if LEDGER.exists() else []:
-        e = json.loads(line)
-        k = (e["client"], e["project"], e["billable"])
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            bad += 1
+            continue
+        cur = e["currency"].upper()
+        # one row per currency, so a project whose currency changed keeps hours and cost together
+        k = (e["client"], e["project"], e["billable"], cur)
         r = agg.setdefault(k, {"seconds": 0, "tokens": 0, "cost": {}, "extra": {},
-                               "rate": e["rate"], "currency": e["currency"], "notes": []})
+                               "rate": e["rate"], "currency": cur, "notes": []})
         r["seconds"] += e["seconds"]
         r["tokens"] += e["tokens_est"]
-        r["rate"], r["currency"] = e["rate"], e["currency"]
+        r["rate"] = e["rate"]
         if e["billable"]:
-            add_money(r["cost"], e["currency"], e["seconds"] / 3600 * e["rate"])
-        add_money(r["extra"], e.get("additional_currency") or e["currency"], e.get("additional") or 0)
+            add_money(r["cost"], cur, e["seconds"] / 3600 * e["rate"])
+        add_money(r["extra"], (e.get("additional_currency") or cur).upper(), e.get("additional") or 0)
         for n in (e.get("note"), e.get("additional_note")):
             if n and n not in r["notes"]:
                 r["notes"].append(n)
+    if bad:
+        print(f"warning: skipped {bad} malformed ledger line(s)", file=sys.stderr)
     return agg
 
 
 def cmd_dashboard(a):
     agg = rows()
     body, tot_h, tot_c, tot_x = [], {}, {}, {}
-    for (client, project, billable), r in sorted(agg.items()):
+    for (client, project, billable, _), r in sorted(agg.items()):
         h = r["seconds"] / 3600
         total = dict(r["cost"])
-        for c, v in r["extra"].items():
-            add_money(total, c, v)
+        merge_money(total, r["extra"])
         if billable:
             add_money(tot_h, r["currency"], h)
-            for c, v in r["cost"].items():
-                add_money(tot_c, c, v)
-            for c, v in r["extra"].items():
-                add_money(tot_x, c, v)
+            merge_money(tot_c, r["cost"])
+            merge_money(tot_x, r["extra"])
         body.append(
             "<tr>" + "".join(f"<td{c}>{html.escape(str(v))}</td>" for v, c in [
                 (client, ""), (project, ""),
                 (f"{r['rate']:,.2f} {r['currency']}/h", ' class="n"'),
                 ("billable" if billable else "non-billable", ' class="b"' if billable else ' class="nb"'),
                 (f"{h:.2f}", ' class="n"'),
-                (fmt(r["cost"], billable) if billable else "—", ' class="n"'),
-                (fmt(total, billable) if billable else fmt(r["extra"], False), ' class="n"'),
+                (fmt(r["cost"], billable), ' class="n"'),
+                (fmt(total, billable), ' class="n"'),
                 (fmt(r["extra"], billable), ' class="n"'),
                 ("; ".join(r["notes"]), ' class="notes"'),
             ]) + "</tr>")
     # one footer row per currency; currencies are never summed together
     foot = []
     for c in sorted(set(tot_h) | set(tot_c) | set(tot_x)):
-        cost, extra = tot_c.get(c, 0.0), tot_x.get(c, 0.0)
-        foot.append(f'<tr><td colspan=3>Billable total ({html.escape(c)})<td><td class="n">{tot_h.get(c, 0.0):.2f}'
-                    f'<td class="n">{cost:,.2f} {c}<td class="n">{cost + extra:,.2f} {c}'
-                    f'<td class="n">{extra:,.2f} {c}<td></tr>')
+        cost, extra, ec = tot_c.get(c, 0.0), tot_x.get(c, 0.0), html.escape(c)
+        foot.append(f'<tr><td colspan=3>Billable total ({ec})<td><td class="n">{tot_h.get(c, 0.0):.2f}'
+                    f'<td class="n">{cost:,.2f} {ec}<td class="n">{cost + extra:,.2f} {ec}'
+                    f'<td class="n">{extra:,.2f} {ec}<td></tr>')
     doc = f"""<!doctype html><meta charset="utf-8"><title>Freelance timer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
