@@ -20,7 +20,25 @@ cp -R freelance-timer-skill/.claude/skills/freelance-timer ~/.claude/skills/
 
 Requires Python 3 (standard library only). Data lives in `~/.claude/freelance-timer/` (override with `FT_HOME`).
 
-To have Claude run it at the start of every session, add a `SessionStart` hook in `~/.claude/settings.json` that tells Claude to invoke the `freelance-timer` skill.
+To have Claude run it at the start of every session, add a `SessionStart` hook to `~/.claude/settings.json` that tells Claude to invoke the skill (merge it into any existing `hooks` block):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"FREELANCE TIMER: Before doing anything else in this session, invoke the freelance-timer skill (Skill tool, skill name freelance-timer). Ask which client/project this session is for and whether it is billable, then follow the skill for per-prompt tracking.\"}}'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ## Usage
 
