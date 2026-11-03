@@ -14,7 +14,7 @@ A [Claude Code](https://claude.com/claude-code) skill for freelancers who bill b
 Copy the skill folder into your Claude Code skills directory:
 
 ```bash
-git clone https://github.com/<you>/freelance-timer-skill.git
+git clone https://github.com/allinamosnola/freelance-timer-skill.git
 cp -R freelance-timer-skill/.claude/skills/freelance-timer ~/.claude/skills/
 ```
 
