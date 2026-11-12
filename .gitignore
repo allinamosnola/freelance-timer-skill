@@ -4,3 +4,6 @@ __pycache__/
 # local skill-authoring tooling and eval runs, not part of the skill
 .claude/skills/skill-creator/
 freelance-timer-workspace/
+
+# generated video projects and renders
+videos/
